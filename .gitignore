@@ -1,0 +1,14 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.cache/
+data/dataset/
+data/**/tickets_created.csv
+sample_outputs/*
+!sample_outputs/README.md
+report.pdf
+demo.mp4
+team_name_voiceops.zip
