@@ -30,6 +30,17 @@ Edit `.env` and set:
 
 For a compatible local model server, set `LLM_BASE_URL` and a non-empty placeholder `LLM_API_KEY`. If its embedding endpoint differs, configure `EMBEDDING_BASE_URL` and `EMBEDDING_API_KEY` separately. Never commit `.env` or put keys in source code.
 
+The local Ollama configuration used for this checkout is:
+
+```dotenv
+LLM_API_KEY=ollama
+LLM_BASE_URL=http://localhost:11434/v1
+LLM_MODEL=qwen3:4b
+EMBEDDING_API_KEY=ollama
+EMBEDDING_BASE_URL=http://localhost:11434/v1
+EMBEDDING_MODEL=embeddinggemma
+```
+
 ## 2. Build the knowledge index
 
 ```powershell
