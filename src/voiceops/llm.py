@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from openai import OpenAI
@@ -40,13 +41,25 @@ class ModelGateway:
             for host in ("localhost:11434", "127.0.0.1:11434")
         )
         if local_ollama and self.settings.llm_model.lower().startswith("qwen3"):
-            # Qwen3's default thinking mode can add substantial latency for this FAQ/RAG workload.
-            request["reasoning_effort"] = "none"
+            # Ollama uses its `think` request field; reasoning_effort is ignored by its
+            # OpenAI-compatible endpoint and Qwen3 may otherwise expose long <think> blocks.
+            request["extra_body"] = {"think": False}
         if tools:
             request["tools"] = tools
             request["tool_choice"] = "auto"
         response = self.chat_client.chat.completions.create(**request)
-        return response.choices[0].message
+        message = response.choices[0].message
+        content = getattr(message, "content", None)
+        if isinstance(content, str):
+            safe_content = re.sub(
+                r"<think\b[^>]*>.*?(?:</think\s*>|$)",
+                "",
+                content,
+                flags=re.IGNORECASE | re.DOTALL,
+            ).strip()
+            if safe_content != content:
+                message = message.model_copy(update={"content": safe_content})
+        return message
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
