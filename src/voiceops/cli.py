@@ -45,6 +45,12 @@ def make_parser() -> argparse.ArgumentParser:
     evaluate = commands.add_parser("evaluate", help="Run the supplied question and conversation practice sets.")
     evaluate.add_argument("--mode", choices=("all", "rag", "prompt-only"), default="all")
     evaluate.add_argument("--include-asr", action="store_true", help="Also evaluate asr_text variants of single questions.")
+    evaluate.add_argument(
+        "--workers",
+        type=int,
+        default=4,
+        help="Parallel workers for independent single-question evaluation calls (default: 4).",
+    )
     evaluate.add_argument("--output-dir", type=Path, default=None)
 
     return parser
@@ -94,7 +100,13 @@ def main(argv: list[str] | None = None) -> int:
             index.settings = settings
             agent.settings = settings
         modes = ["prompt-only", "rag"] if args.mode == "all" else [args.mode]
-        summary = run_evaluation(settings, agent, modes=modes, include_asr=args.include_asr)
+        summary = run_evaluation(
+            settings,
+            agent,
+            modes=modes,
+            include_asr=args.include_asr,
+            workers=max(1, args.workers),
+        )
         print(f"Wrote {summary['records']} records to {summary['result_file']}")
         print(summary["note"])
         return 0

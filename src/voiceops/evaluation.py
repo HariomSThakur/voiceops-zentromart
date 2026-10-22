@@ -6,11 +6,15 @@ import csv
 import json
 import re
 import time
-from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock, local
 from typing import Any
 
 from .agent import AgentResult, SupportAgent
+from .database import DatasetTools
 from .database import normalize_digits
+from .knowledge import KnowledgeIndex
+from .llm import ModelGateway
 from .settings import Settings
 
 
@@ -28,6 +32,7 @@ class EvaluationProgress:
         self.total = total
         self.completed = 0
         self.started_at = time.perf_counter()
+        self._lock = Lock()
         width = 24
         print(
             f"[{ '-' * width }] 0/{self.total} (0%) "
@@ -36,22 +41,26 @@ class EvaluationProgress:
         )
 
     def advance(self, label: str) -> None:
-        self.completed += 1
-        elapsed = time.perf_counter() - self.started_at
-        average_seconds = elapsed / self.completed
-        remaining = max(0, self.total - self.completed)
-        eta = average_seconds * remaining
-        fraction = self.completed / self.total
-        width = 24
-        filled = min(width, (width * self.completed + self.total - 1) // self.total)
-        percent = min(100, (100 * self.completed + self.total - 1) // self.total)
-        bar = "#" * filled + "-" * (width - filled)
-        line = (
-            f"[{bar}] {self.completed}/{self.total} ({percent}%) "
-            f"| {label} | elapsed {_format_duration(elapsed)} "
-            f"| ETA {_format_duration(eta)}"
-        )
-        print("\r" + line.ljust(140), end="\n" if self.completed >= self.total else "", flush=True)
+        with self._lock:
+            self.completed += 1
+            elapsed = time.perf_counter() - self.started_at
+            average_seconds = elapsed / self.completed
+            remaining = max(0, self.total - self.completed)
+            eta = average_seconds * remaining
+            width = 24
+            filled = min(width, (width * self.completed + self.total - 1) // self.total)
+            percent = min(100, (100 * self.completed + self.total - 1) // self.total)
+            bar = "#" * filled + "-" * (width - filled)
+            line = (
+                f"[{bar}] {self.completed}/{self.total} ({percent}%) "
+                f"| {label} | elapsed {_format_duration(elapsed)} "
+                f"| ETA {_format_duration(eta)}"
+            )
+            print(
+                "\r" + line.ljust(140),
+                end="\n" if self.completed >= self.total else "",
+                flush=True,
+            )
 
 
 def _normal(text: str) -> str:
@@ -63,8 +72,7 @@ def _split_facts(text: str) -> list[str]:
     return [part.strip() for part in re.split(r"\s*;\s*", text or "") if part.strip()]
 
 
-def _fact_present(fact: str, answer: str) -> bool:
-    normalized_answer = _normal(answer)
+def _fact_present(fact: str, normalized_answer: str) -> bool:
     for alternative in re.split(r"\s+/\s*", fact):
         normalized_fact = _normal(alternative)
         if normalized_fact and normalized_fact in normalized_answer:
@@ -75,8 +83,9 @@ def _fact_present(fact: str, answer: str) -> bool:
 def _check_answer(row: dict[str, str], result: AgentResult) -> dict[str, Any]:
     required = _split_facts(row.get("must_include", ""))
     forbidden = _split_facts(row.get("must_not_include", ""))
-    required_ok = [fact for fact in required if _fact_present(fact, result.answer)]
-    forbidden_hit = [fact for fact in forbidden if _fact_present(fact, result.answer)]
+    normalized_answer = _normal(result.answer)
+    required_ok = [fact for fact in required if _fact_present(fact, normalized_answer)]
+    forbidden_hit = [fact for fact in forbidden if _fact_present(fact, normalized_answer)]
     gold = [part.strip() for part in re.split(r"[;,|]", row.get("gold_evidence", "")) if part.strip()]
     retrieved = {str(source.get("section_id", "")).casefold() for source in result.sources}
     evidence_hits = [item for item in gold if item.casefold() in retrieved]
@@ -93,36 +102,83 @@ def _check_answer(row: dict[str, str], result: AgentResult) -> dict[str, Any]:
     }
 
 
+_THREAD_LOCAL = local()
+
+
+def _thread_agent(settings: Settings) -> SupportAgent:
+    agent = getattr(_THREAD_LOCAL, "agent", None)
+    if agent is None:
+        gateway = ModelGateway(settings)
+        index = KnowledgeIndex(settings, gateway)
+        tools = DatasetTools(settings)
+        agent = SupportAgent(settings, gateway, index, tools)
+        _THREAD_LOCAL.agent = agent
+    return agent
+
+
+def _question_record(
+    settings: Settings,
+    row: dict[str, str],
+    mode: str,
+    input_kind: str,
+) -> dict[str, Any]:
+    agent = _thread_agent(settings)
+    case_id = row.get("id", "unknown")
+    session_id = f"evaluation:{mode}:{case_id}:{input_kind}:{time.time_ns()}"
+    text = row.get(input_kind, "").strip()
+    result = agent.respond(text, session_id=session_id, mode=mode)
+    agent.reset(session_id)
+    return {
+        "case_type": "question",
+        "case_id": row.get("id", ""),
+        "input_kind": input_kind,
+        "mode": mode,
+        "input": result.recorded_user_text,
+        "answer": result.answer,
+        "retrieved_sources": result.sources,
+        "tool_actions": result.actions,
+        "checks": _check_answer(row, result),
+    }
+
+
 def _evaluate_questions(
     settings: Settings,
-    agent: SupportAgent,
     rows: list[dict[str, str]],
     output: list[dict[str, Any]],
     modes: list[str],
     include_asr: bool,
     progress: EvaluationProgress,
+    workers: int,
 ) -> None:
-    for mode in modes:
-        for row in rows:
-            for input_kind in (["question", "asr_text"] if include_asr else ["question"]):
-                text = row.get(input_kind, "").strip()
-                if not text:
-                    continue
-                session_id = f"evaluation:{mode}:{row.get('id', 'unknown')}:{input_kind}"
-                result = agent.respond(text, session_id=session_id, mode=mode)
-                progress.advance(f"question {row.get('id', 'unknown')} ({mode})")
-                output.append({
-                    "case_type": "question",
-                    "case_id": row.get("id", ""),
-                    "input_kind": input_kind,
-                    "mode": mode,
-                    "input": result.recorded_user_text,
-                    "answer": result.answer,
-                    "retrieved_sources": result.sources,
-                    "tool_actions": result.actions,
-                    "checks": _check_answer(row, result),
-                })
-                agent.reset(session_id)
+    tasks = [
+        (mode, row, input_kind)
+        for mode in modes
+        for row in rows
+        for input_kind in (["question", "asr_text"] if include_asr else ["question"])
+        if row.get(input_kind, "").strip()
+    ]
+    if workers <= 1 or len(tasks) <= 1:
+        for mode, row, input_kind in tasks:
+            output.append(_question_record(settings, row, mode, input_kind))
+            progress.advance(f"question {row.get('id', 'unknown')} ({mode})")
+        return
+
+    ordered_records: dict[int, dict[str, Any]] = {}
+    max_workers = min(max(1, workers), len(tasks))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(_question_record, settings, row, mode, input_kind): (
+                index,
+                mode,
+                row,
+            )
+            for index, (mode, row, input_kind) in enumerate(tasks)
+        }
+        for future in as_completed(futures):
+            index, mode, row = futures[future]
+            ordered_records[index] = future.result()
+            progress.advance(f"question {row.get('id', 'unknown')} ({mode})")
+    output.extend(ordered_records[index] for index in range(len(tasks)))
 
 
 def _evaluate_conversations(
@@ -163,6 +219,7 @@ def run_evaluation(
     agent: SupportAgent,
     modes: list[str] | None = None,
     include_asr: bool = False,
+    workers: int = 4,
 ) -> dict[str, Any]:
     practice_dir = settings.dataset_dir / "practice"
     questions_path = practice_dir / "questions.csv"
@@ -185,7 +242,13 @@ def run_evaluation(
     )
     progress = EvaluationProgress(question_runs + len(conversations))
     _evaluate_questions(
-        settings, agent, questions, records, selected_modes, include_asr, progress
+        settings,
+        questions,
+        records,
+        selected_modes,
+        include_asr,
+        progress,
+        workers=workers,
     )
     _evaluate_conversations(agent, conversations, records, progress)
     settings.output_dir.mkdir(parents=True, exist_ok=True)
