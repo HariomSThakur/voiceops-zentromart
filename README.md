@@ -59,6 +59,12 @@ python run.py evaluate
 
 This runs all single questions in prompting-only and RAG modes, then all multi-turn conversations in RAG mode. It writes `sample_outputs/evaluation.jsonl` and `sample_outputs/evaluation_summary.json`. Add `--include-asr` to also run the `asr_text` variants. The run makes model and embedding API calls. The built-in checks compare required/forbidden facts and retrieved evidence; review decisions, multilingual wording, and policy nuance manually before reporting a score. These checks are a working aid, not the organizer's scoring system.
 
+Independent single-question cases run concurrently, using four workers by default. Multi-turn conversations remain sequential so their session state and turn order are preserved. Set `--workers 1` to run question cases sequentially, or choose another positive worker count to tune throughput for your model endpoint:
+
+```powershell
+python run.py evaluate --workers 1
+```
+
 Each evaluation conversation gets its own session, and turns are processed in order. Verification values in user messages are redacted from saved inputs and are never passed to the LLM. The helper tool returns order details only after its own verification succeeds.
 
 ## 5. Run the required audio-folder command
@@ -93,7 +99,7 @@ python make_submission.py --team-name your_team_name
 ```
 
 The packager checks the required files and excludes credentials, environments, caches, generated ticket logs, and the dataset.
-Add the public repository URL to the README before submission after you publish the project repository.
+Public repository: <https://github.com/HariomSThakur/voiceops-zentromart>
 
 ## References
 

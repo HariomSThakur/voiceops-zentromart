@@ -15,6 +15,16 @@ from .settings import load_settings
 from .speech import GnaniSpeech
 
 
+def _positive_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be an integer") from exc
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return parsed
+
+
 def _runtime():
     settings = load_settings()
     gateway = ModelGateway(settings)
@@ -46,6 +56,12 @@ def make_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--mode", choices=("all", "rag", "prompt-only"), default="all")
     evaluate.add_argument("--include-asr", action="store_true", help="Also evaluate asr_text variants of single questions.")
     evaluate.add_argument("--output-dir", type=Path, default=None)
+    evaluate.add_argument(
+        "--workers",
+        type=_positive_int,
+        default=4,
+        help="Concurrent workers for independent question cases (use 1 for sequential execution).",
+    )
 
     return parser
 
@@ -94,7 +110,13 @@ def main(argv: list[str] | None = None) -> int:
             index.settings = settings
             agent.settings = settings
         modes = ["prompt-only", "rag"] if args.mode == "all" else [args.mode]
-        summary = run_evaluation(settings, agent, modes=modes, include_asr=args.include_asr)
+        summary = run_evaluation(
+            settings,
+            agent,
+            modes=modes,
+            include_asr=args.include_asr,
+            workers=args.workers,
+        )
         print(f"Wrote {summary['records']} records to {summary['result_file']}")
         print(summary["note"])
         return 0
