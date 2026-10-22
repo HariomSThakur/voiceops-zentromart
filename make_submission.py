@@ -17,7 +17,7 @@ REQUIRED = [
     "report.pdf",
     "demo.mp4",
 ]
-EXCLUDED_PARTS = {".git", ".venv", "venv", ".cache", "dataset", "report", "__pycache__", ".pytest_cache"}
+EXCLUDED_PARTS = {".git", ".venv", "venv", ".cache", "dataset", "report", "sample_outputs", "__pycache__", ".pytest_cache"}
 
 
 def safe_to_package(path: Path) -> bool:

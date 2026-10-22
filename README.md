@@ -109,7 +109,7 @@ When `report.pdf` and `demo.mp4` are ready, create the requested ZIP:
 python make_submission.py --team-name your_team_name
 ```
 
-The packager checks the required files and excludes credentials, environments, caches, generated ticket logs, and the dataset.
+The packager checks the required files and excludes credentials, environments, caches, generated ticket logs, practice outputs, and the dataset.
 Public repository: <https://github.com/HariomSThakur/voiceops-zentromart>
 
 ## References
