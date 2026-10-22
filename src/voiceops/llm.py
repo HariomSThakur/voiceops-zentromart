@@ -34,7 +34,7 @@ class ModelGateway:
             "model": self.settings.llm_model,
             "messages": messages,
             "temperature": 0.1,
-            "max_tokens": 700,
+            "max_tokens": 350,
         }
         local_ollama = any(
             host in self.settings.llm_base_url.lower()

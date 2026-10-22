@@ -68,7 +68,7 @@ python run.py ask --mode prompt-only --text "How long do wallet refunds take?"
 python run.py evaluate
 ```
 
-This runs all single questions in prompting-only and RAG modes, then all multi-turn conversations in RAG mode. It writes `sample_outputs/evaluation.jsonl` and `sample_outputs/evaluation_summary.json`. Add `--include-asr` to also run the `asr_text` variants. The run makes model and embedding API calls. The built-in checks compare required/forbidden facts and retrieved evidence; review decisions, multilingual wording, and policy nuance manually before reporting a score. These checks are a working aid, not the organizer's scoring system.
+This runs all single questions in prompting-only and RAG modes, then all multi-turn conversations in RAG mode. Each completed case is checkpointed to `sample_outputs/evaluation.jsonl`; the final `evaluation_summary.json` is written when the run finishes. Add `--include-asr` to also run the `asr_text` variants. The run makes model and embedding API calls. The built-in checks compare required/forbidden facts and retrieved evidence; review decisions, multilingual wording, and policy nuance manually before reporting a score. These checks are a working aid, not the organizer's scoring system.
 
 Independent single-question cases run concurrently, using four workers by default. Multi-turn conversations remain sequential so their session state and turn order are preserved. Set `--workers 1` to run question cases sequentially, or choose another positive worker count to tune throughput for your model endpoint:
 
@@ -101,7 +101,7 @@ The archive has no audio clips. Record your own voice for the demo and practice 
 
 ## Submission materials still requiring your run/results
 
-`report/REPORT_TEMPLATE.md` is the report draft and `report/DEMO_SCRIPT.md` is a two-minute recording plan. Fill them with real evaluation results and record the demo before packaging. The project does not invent scores or claim a demo was recorded.
+The current three-page `report.pdf` documents a real two-turn voice smoke check and clearly marks the full practice-set score as pending. `demo.mp4` is a short voice walkthrough built from the supplied recording and Gnani replies. Finish the practice-set evaluation and update the report before treating this package as final; no full-set score is claimed yet.
 
 When `report.pdf` and `demo.mp4` are ready, create the requested ZIP:
 

@@ -3,9 +3,33 @@
 from __future__ import annotations
 
 import os
+import struct
 from pathlib import Path
 
 from .settings import Settings
+
+
+def _finalize_wav_header(audio: bytes) -> bytes:
+    """Replace streaming WAV size sentinels with the completed payload sizes."""
+    if len(audio) < 12 or audio[:4] != b"RIFF" or audio[8:12] != b"WAVE":
+        return audio
+    if len(audio) - 8 > 0xFFFFFFFF:
+        raise ValueError("The synthesized WAV exceeds the RIFF size limit.")
+
+    finalized = bytearray(audio)
+    struct.pack_into("<I", finalized, 4, len(finalized) - 8)
+    offset = 12
+    while offset + 8 <= len(finalized):
+        chunk_id = finalized[offset : offset + 4]
+        chunk_size = struct.unpack_from("<I", finalized, offset + 4)[0]
+        if chunk_id == b"data" and chunk_size == 0xFFFFFFFF:
+            actual_size = len(finalized) - offset - 8
+            struct.pack_into("<I", finalized, offset + 4, actual_size)
+            break
+        if chunk_size == 0xFFFFFFFF:
+            break
+        offset += 8 + chunk_size + (chunk_size & 1)
+    return bytes(finalized)
 
 
 class GnaniSpeech:
@@ -40,4 +64,4 @@ class GnaniSpeech:
             language=language or self.settings.tts_language,
             audio_config=self.audio_config,
         )
-        output_path.write_bytes(audio)
+        output_path.write_bytes(_finalize_wav_header(audio))

@@ -5,10 +5,11 @@ from __future__ import annotations
 import csv
 import json
 import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .agent import AgentResult, SupportAgent
 from .database import normalize_digits
@@ -131,6 +132,7 @@ def _evaluate_questions(
     include_asr: bool,
     progress: EvaluationProgress,
     workers: int,
+    checkpoint: Callable[[dict[str, Any]], None] | None = None,
 ) -> None:
     tasks = [
         (row, mode, input_kind)
@@ -143,8 +145,10 @@ def _evaluate_questions(
     if workers == 1:
         for index, (row, mode, input_kind) in enumerate(tasks):
             record = _evaluate_question_case(agent, index, row, mode, input_kind)
-            progress.advance(f"question {row.get('id', 'unknown')} ({mode})")
             output.append(record)
+            if checkpoint:
+                checkpoint(record)
+            progress.advance(f"question {row.get('id', 'unknown')} ({mode})")
         return
 
     ordered: list[dict[str, Any] | None] = [None] * len(tasks)
@@ -157,7 +161,10 @@ def _evaluate_questions(
         }
         for future in as_completed(futures):
             index, row, mode = futures[future]
-            ordered[index] = future.result()
+            record = future.result()
+            ordered[index] = record
+            if checkpoint:
+                checkpoint(record)
             progress.advance(f"question {row.get('id', 'unknown')} ({mode})")
     output.extend(record for record in ordered if record is not None)
 
@@ -167,6 +174,7 @@ def _evaluate_conversations(
     rows: list[dict[str, str]],
     output: list[dict[str, Any]],
     progress: EvaluationProgress,
+    checkpoint: Callable[[dict[str, Any]], None] | None = None,
 ) -> None:
     groups: dict[str, list[dict[str, str]]] = {}
     for row in rows:
@@ -175,12 +183,9 @@ def _evaluate_conversations(
         session_id = f"evaluation:conversation:{conversation_id}"
         for row in sorted(turns, key=lambda item: int(item.get("turn", "0") or 0)):
             result = agent.respond(row.get("customer_message", ""), session_id=session_id, mode="rag")
-            progress.advance(
-                f"conversation {conversation_id}, turn {row.get('turn', 'unknown')}"
-            )
             checks = _check_answer(row, result)
             checks["expected_tool_names"] = sorted(set(re.findall(r"\b(lookup_order|create_ticket)\b", row.get("expected_tool_calls", ""))))
-            output.append({
+            record = {
                 "case_type": "conversation_turn",
                 "conversation_id": conversation_id,
                 "turn": row.get("turn", ""),
@@ -191,7 +196,13 @@ def _evaluate_conversations(
                 "tool_actions": result.actions,
                 "checks": checks,
                 "scenario": row.get("scenario", ""),
-            })
+            }
+            output.append(record)
+            if checkpoint:
+                checkpoint(record)
+            progress.advance(
+                f"conversation {conversation_id}, turn {row.get('turn', 'unknown')}"
+            )
         agent.reset(session_id)
 
 
@@ -216,6 +227,17 @@ def run_evaluation(
 
     selected_modes = modes or ["prompt-only", "rag"]
     records: list[dict[str, Any]] = []
+    settings.output_dir.mkdir(parents=True, exist_ok=True)
+    result_path = settings.output_dir / "evaluation.jsonl"
+    result_path.write_text("", encoding="utf-8")
+    checkpoint_lock = threading.Lock()
+
+    def checkpoint(record: dict[str, Any]) -> None:
+        line = json.dumps(record, ensure_ascii=False) + "\n"
+        with checkpoint_lock, result_path.open("a", encoding="utf-8") as stream:
+            stream.write(line)
+            stream.flush()
+
     question_runs = sum(
         1
         for _mode in selected_modes
@@ -225,11 +247,16 @@ def run_evaluation(
     )
     progress = EvaluationProgress(question_runs + len(conversations))
     _evaluate_questions(
-        agent, questions, records, selected_modes, include_asr, progress, workers
+        agent,
+        questions,
+        records,
+        selected_modes,
+        include_asr,
+        progress,
+        workers,
+        checkpoint,
     )
-    _evaluate_conversations(agent, conversations, records, progress)
-    settings.output_dir.mkdir(parents=True, exist_ok=True)
-    result_path = settings.output_dir / "evaluation.jsonl"
+    _evaluate_conversations(agent, conversations, records, progress, checkpoint)
     result_path.write_text(
         "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in records),
         encoding="utf-8",
