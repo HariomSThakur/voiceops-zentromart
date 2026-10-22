@@ -58,6 +58,7 @@ python run.py evaluate
 ```
 
 This runs all single questions in prompting-only and RAG modes, then all multi-turn conversations in RAG mode. It writes `sample_outputs/evaluation.jsonl` and `sample_outputs/evaluation_summary.json`. Add `--include-asr` to also run the `asr_text` variants. The run makes model and embedding API calls. The built-in checks compare required/forbidden facts and retrieved evidence; review decisions, multilingual wording, and policy nuance manually before reporting a score. These checks are a working aid, not the organizer's scoring system.
+Single-question evaluation calls run in parallel by default (`--workers 4`); use `--workers 1` for fully sequential runs.
 
 Each evaluation conversation gets its own session, and turns are processed in order. Verification values in user messages are redacted from saved inputs and are never passed to the LLM. The helper tool returns order details only after its own verification succeeds.
 
@@ -99,4 +100,3 @@ Add the public repository URL to the README before submission after you publish 
 
 - Gnani official Python SDK: <https://github.com/Gnani-AI-Mintlify/Gnani-Vachana>
 - Gnani API documentation: <https://docs.gnani.ai>
-
